@@ -1,0 +1,20 @@
+# Core Framework
+langchain
+langchain-core
+langchain-community
+
+# Model Providers
+langchain-groq
+langchain-huggingface
+
+# Vector Database & Retrieval
+chromadb
+flashrank
+
+# Document Processing (Optional but recommended for RAG)
+sentence-transformers
+pypdf
+unstructured
+
+# Utilities
+python-dotenv
