@@ -96,6 +96,32 @@ html, body, [class*="css"] {
     font-size: 0.86rem !important;
 }
 
+/* --- Disclaimer box --- */
+.disclaimer-box {
+    background: #1a0e08;
+    border: 1.5px solid rgba(230, 74, 25, 0.40);
+    border-radius: 12px;
+    padding: 13px 17px;
+    margin-bottom: 14px;
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+}
+.disclaimer-icon {
+    font-size: 1.1rem;
+    flex-shrink: 0;
+    margin-top: 1px;
+}
+.disclaimer-text {
+    color: #ffb39a !important;
+    font-size: 0.82rem !important;
+    line-height: 1.65 !important;
+    margin: 0 !important;
+}
+.disclaimer-text strong {
+    color: #ff7043 !important;
+}
+
 /* --- Suggest label --- */
 .suggest-label {
     font-size: 0.73rem;
@@ -361,9 +387,8 @@ if "messages" not in st.session_state:
     st.session_state.messages = []
 if "user_name" not in st.session_state:
     st.session_state.user_name = None
-# Flag: True saat sedang memproses query (spinner aktif), mencegah tombol ditekan ganda
-if "is_processing" not in st.session_state:
-    st.session_state.is_processing = False
+if "show_empty_warning" not in st.session_state:
+    st.session_state.show_empty_warning = False
 
 
 # ==========================================
@@ -440,20 +465,30 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
+# Disclaimer
+st.markdown("""
+<div class="disclaimer-box">
+  <div class="disclaimer-icon">⚕️</div>
+  <p class="disclaimer-text">
+    <strong>Disclaimer:</strong> Informasi yang diberikan chatbot ini bersifat edukatif dan
+    <strong>bukan pengganti diagnosis atau saran medis profesional</strong>.
+    Selalu konsultasikan kondisi anak dan kehamilan Anda kepada
+    <strong>dokter, bidan, atau tenaga kesehatan</strong> terdekat untuk penanganan yang tepat.
+  </p>
+</div>
+""", unsafe_allow_html=True)
+
 st.info("Chatbot ini beroperasi **tanpa memori antar percakapan**. "
         "Berikan pertanyaan yang lengkap dan spesifik untuk hasil terbaik.")
 
 # ==========================================
-# KONDISI TAMPIL EXAMPLE QUESTIONS
-# Hanya tampil jika:
-#   1. Belum ada riwayat chat (messages kosong)
-#   2. Tidak ada pending_query yang menunggu diproses
-#   3. Tidak sedang memproses (is_processing = False)
+# EXAMPLE QUESTIONS
+# Hanya tampil jika belum ada riwayat chat
+# dan tidak ada pending_query
 # ==========================================
 show_examples = (
     len(st.session_state.messages) == 0
     and "pending_query" not in st.session_state
-    and not st.session_state.is_processing
 )
 
 if show_examples:
@@ -469,9 +504,8 @@ if show_examples:
     for i, label in enumerate(examples):
         with cols[i % 2]:
             if st.button(label, key=f"ex_{i}", use_container_width=True):
-                # Simpan query & tandai sedang proses, lalu rerun agar tombol langsung hilang
+                # Simpan ke pending_query, rerun agar tombol hilang dan flow masuk ke bawah
                 st.session_state.pending_query = label
-                st.session_state.is_processing = True
                 st.rerun()
 
     st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
@@ -483,12 +517,16 @@ for msg in st.session_state.messages:
         if msg["role"] == "assistant" and msg.get("refs") is not None:
             render_refs(msg["refs"])
 
-# --- Capture input ---
-user_input = st.chat_input(f"Ketik pertanyaan Anda, {first_name}...")
+# --- Resolve final query: ambil dari chat_input ATAU pending_query ---
+# PENTING: chat_input harus selalu dipanggil agar Streamlit tidak error,
+# lalu pending_query (dari tombol contoh) akan menimpanya jika ada.
+chat_input_value = st.chat_input(f"Ketik pertanyaan Anda, {first_name}...")
 
-# Ambil pending_query (dari tombol contoh) dan jadikan user_input
+# Ambil pending_query (dari tombol contoh) — prioritas di atas chat_input
 if "pending_query" in st.session_state:
     user_input = st.session_state.pop("pending_query")
+else:
+    user_input = chat_input_value
 
 # Frasa yang menandakan jawaban "tidak ditemukan" di dokumen
 NO_INFO_PHRASES = [
@@ -501,30 +539,31 @@ NO_INFO_PHRASES = [
 ]
 
 def is_no_info_answer(text: str) -> bool:
+    # Jawaban panjang (>300 karakter) berarti ada info tambahan → tetap render refs
+    if len(text.strip()) > 300:
+        return False
     lowered = text.lower()
     return any(phrase in lowered for phrase in NO_INFO_PHRASES)
 
 # --- Peringatan input kosong ---
-if "show_empty_warning" not in st.session_state:
-    st.session_state.show_empty_warning = False
-
 if user_input is not None and user_input.strip() == "":
     st.session_state.show_empty_warning = True
     user_input = None
+else:
+    st.session_state.show_empty_warning = False
 
-if st.session_state.show_empty_warning and user_input is None:
+if st.session_state.show_empty_warning:
     st.warning("Pertanyaan tidak boleh kosong. Silakan ketik pertanyaan Anda terlebih dahulu.")
 
 # --- Process and respond ---
 if user_input and user_input.strip():
-    st.session_state.show_empty_warning = False
-    # Tandai sedang memproses (mencegah tombol example muncul kembali di render berikutnya)
-    st.session_state.is_processing = True
 
+    # Tampilkan pesan user
     with st.chat_message("user"):
         st.markdown(user_input)
     st.session_state.messages.append({"role": "user", "content": user_input})
 
+    # Tampilkan respons asisten dengan spinner di dalam chat bubble
     with st.chat_message("assistant"):
         with st.spinner("Mencari informasi terbaik untuk Anda..."):
             response = rag.run(user_input, user_name=st.session_state.user_name)
@@ -534,9 +573,8 @@ if user_input and user_input.strip():
 
         st.markdown(final_answer)
 
-        # Jika jawaban adalah "tidak ditemukan", tidak tampilkan ref-box sama sekali
+        # Jika jawaban adalah "tidak ditemukan", tidak tampilkan ref-box
         if not is_no_info_answer(final_answer):
-            # Deduplicate sources (order-preserving)
             seen = set()
             unique_sources = []
             if referensi_docs and isinstance(referensi_docs, list):
@@ -545,7 +583,6 @@ if user_input and user_input.strip():
                     if src not in seen:
                         seen.add(src)
                         unique_sources.append(src)
-
             render_refs(unique_sources)
         else:
             unique_sources = []
@@ -555,9 +592,6 @@ if user_input and user_input.strip():
         "content": final_answer,
         "refs": unique_sources if not is_no_info_answer(final_answer) else None,
     })
-
-    # Selesai memproses — reset flag
-    st.session_state.is_processing = False
 
 # --- Footer ---
 st.markdown("<br>", unsafe_allow_html=True)
